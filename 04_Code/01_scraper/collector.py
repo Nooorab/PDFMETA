@@ -346,7 +346,7 @@ _SKIP_EXIFTOOL_FIELDS = {
     "SourceFile", "ExifToolVersion", "Directory",
     "FileModifyDate", "FileAccessDate", "FileInodeChangeDate",
     "FilePermissions", "FileType", "FileTypeExtension",
-    "MIMEType",
+    "MIMEType", "FileName", "FileSize",
 }
 
 def _open_csv(path: Path, fieldnames: list[str]) -> tuple:
@@ -544,7 +544,17 @@ def process_pdf(
     final_dir = DATA_DIR / "01_raw_pdfs" / year_str / authority.name_en.replace(" ", "_").replace("/", "-")
     final_dir.mkdir(parents=True, exist_ok=True)
     
-    final_path = final_dir / tmp_path.name
+    # Extract original filename from URL
+    original_name = pdf_url.split("/")[-1].split("?")[0]
+    if not original_name.lower().endswith(".pdf"):
+        original_name = f"{sha256[:8]}.pdf"
+        
+    final_path = final_dir / original_name
+    
+    # Handle duplicate filenames from the same site
+    if final_path.exists():
+        final_path = final_dir / f"{original_name[:-4]}_{sha256[:6]}.pdf"
+
     try:
         tmp_path.rename(final_path)
         log.debug(f"    [SAVED] {final_path.name}")
