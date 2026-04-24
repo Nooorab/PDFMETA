@@ -107,6 +107,28 @@ def classify_year(year: Optional[int]) -> Optional[str]:
         return PERIOD_POST_LAW
     return None   # Before 2020 — out of scope
 
+def should_download(url_year: Optional[int], period_counts: dict) -> bool:
+    """
+    Only download if we still need documents from this period.
+    """
+    if url_year is None:
+        return True  # Unknown — collect anyway
+    
+    period = classify_year(url_year)
+    if not period:
+        return False  # Before 2020 — out of scope
+    
+    if period == PERIOD_POST_LAW:
+        return period_counts.get(PERIOD_POST_LAW, 0) < QUOTA_PER_PERIOD
+    
+    if period == PERIOD_PRE_NIS2:
+        return period_counts.get(PERIOD_PRE_NIS2, 0) < QUOTA_PER_PERIOD
+    
+    if period == PERIOD_NIS2_PREP:
+        return period_counts.get(PERIOD_NIS2_PREP, 0) < QUOTA_PER_PERIOD
+    
+    return False
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data structures
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,6 +242,9 @@ _URL_DATE_PATTERNS = [
     re.compile(r"/(\d{4})-(\d{2})-\d{2}"),        # /2023-05-12
     re.compile(r"[_\-/](\d{4})[_\-]"),            # _2023_ or -2023-
     re.compile(r"/(\d{4})/"),                       # /2023/
+    re.compile(r"(\d{4})[-_]"),                   # 2023-something
+    re.compile(r"[-_](\d{4})\.pdf"),              # something-2023.pdf
+    re.compile(r"(\d{4})\d{2}\d{2}"),             # 20231205 (date without separators)
 ]
 
 def year_from_url(url: str) -> Optional[int]:
@@ -233,6 +258,20 @@ def year_from_url(url: str) -> Optional[int]:
                     return y
             except (ValueError, IndexError):
                 continue
+    return None
+
+def year_from_http_header(response) -> Optional[int]:
+    """Try to extract a publication year from the Last-Modified HTTP header."""
+    last_modified = response.headers.get("Last-Modified", "")
+    if last_modified:
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(last_modified)
+            y = dt.year
+            if 2010 <= y <= 2030:
+                return y
+        except Exception:
+            pass
     return None
 
 
@@ -307,7 +346,7 @@ _SKIP_EXIFTOOL_FIELDS = {
     "SourceFile", "ExifToolVersion", "Directory",
     "FileModifyDate", "FileAccessDate", "FileInodeChangeDate",
     "FilePermissions", "FileType", "FileTypeExtension",
-    "MIMEType", "Linearized",
+    "MIMEType",
 }
 
 def _open_csv(path: Path, fieldnames: list[str]) -> tuple:
@@ -418,6 +457,7 @@ def process_pdf(
     source_page: str,
     authority: Authority,
     url_year: Optional[int],
+    period_counts: dict,
     dry_run: bool = False,
 ) -> Optional[PDFRecord]:
     """
@@ -438,6 +478,7 @@ def process_pdf(
 
     # ── Download to temp file ────────────────────────────────────────────────
     tmp_path: Optional[Path] = None
+    http_year: Optional[int] = None
     try:
         resp = SESSION.get(pdf_url, stream=True, timeout=30)
         resp.raise_for_status()
@@ -447,6 +488,14 @@ def process_pdf(
         if ct and "pdf" not in ct.lower() and "octet-stream" not in ct.lower():
             log.debug(f"    [SKIP] Non-PDF content-type '{ct}': {pdf_url}")
             return None
+
+        # Max file size check (50MB)
+        content_length = resp.headers.get("Content-Length", 0)
+        if int(content_length) > 52_428_800:
+            log.info(f"    [SKIP] File too large ({int(content_length)//1024//1024} MB): {pdf_url}")
+            return None
+
+        http_year = year_from_http_header(resp)
 
         with tempfile.NamedTemporaryFile(
             suffix=".pdf", delete=False, dir=DATA_DIR
@@ -481,8 +530,15 @@ def process_pdf(
     pdf_year     = year_from_exiftool(meta) if meta else None
 
     # ── Determine authoritative year ─────────────────────────────────────────
-    year_used   = url_year if url_year is not None else pdf_year
+    year_used   = url_year or http_year or pdf_year
     period      = classify_year(year_used) or "unknown"
+
+    # Limit unknown documents so we don't collect millions of them
+    if period == "unknown":
+        if period_counts.get("unknown", 0) >= QUOTA_PER_PERIOD:
+            log.debug(f"    [SKIP] Unknown quota full: {pdf_url}")
+            tmp_path.unlink()
+            return None
 
     # ── Move to final storage (organized by year) ────────────────────────────
     year_str = str(year_used) if year_used else "unknown_year"
@@ -495,6 +551,10 @@ def process_pdf(
         log.debug(f"    [SAVED] {final_path.name}")
     except OSError as e:
         log.warning(f"    Could not move file to {final_path}: {e}")
+
+    notes = ""
+    if meta and meta.get("Linearized") == "No":
+        notes = "check_incremental"
 
     # ── Build record ──────────────────────────────────────────────────────────
     record = PDFRecord(
@@ -511,6 +571,7 @@ def process_pdf(
         year_used         = year_used,
         collection_timestamp = datetime.utcnow().isoformat() + "Z",
         exiftool_ok       = exiftool_ok,
+        notes             = notes,
     )
 
     # ── Build metadata field rows ─────────────────────────────────────────────
@@ -648,12 +709,17 @@ def collect_authority(
                     break
 
                 url_year = year_from_url(pdf_url)
-                record = process_pdf(pdf_url, page_url, authority, url_year, dry_run)
+                if not should_download(url_year, period_counts):
+                    log.debug(f"    [SKIP] Period quota full for year {url_year}: {pdf_url}")
+                    seen_urls.add(pdf_url)  # Mark as seen so we don't check again
+                    continue
+
+                record = process_pdf(pdf_url, page_url, authority, url_year, period_counts, dry_run)
                 seen_urls.add(pdf_url)
                 
                 if record:
                     successful_from_page += 1
-                    if record.temporal_period in (PERIOD_PRE_NIS2, PERIOD_NIS2_PREP, PERIOD_POST_LAW):
+                    if record.temporal_period in (PERIOD_PRE_NIS2, PERIOD_NIS2_PREP, PERIOD_POST_LAW, "unknown"):
                         period_counts[record.temporal_period] = (
                             period_counts.get(record.temporal_period, 0) + 1
                         )
