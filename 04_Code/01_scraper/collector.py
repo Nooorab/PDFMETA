@@ -533,12 +533,11 @@ def process_pdf(
     year_used   = url_year or http_year or pdf_year
     period      = classify_year(year_used) or "unknown"
 
-    # Limit unknown documents so we don't collect millions of them
-    if period == "unknown":
-        if period_counts.get("unknown", 0) >= QUOTA_PER_PERIOD:
-            log.debug(f"    [SKIP] Unknown quota full: {pdf_url}")
-            tmp_path.unlink()
-            return None
+    # Enforce quotas after download (since url_year might have been missing)
+    if period_counts.get(period, 0) >= QUOTA_PER_PERIOD:
+        log.debug(f"    [SKIP] Period '{period}' quota full: {pdf_url}")
+        tmp_path.unlink()
+        return None
 
     # ── Move to final storage (organized by year) ────────────────────────────
     year_str = str(year_used) if year_used else "unknown_year"
