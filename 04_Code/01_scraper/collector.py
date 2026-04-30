@@ -347,7 +347,7 @@ _SKIP_EXIFTOOL_FIELDS = {
     "SourceFile", "ExifToolVersion", "Directory",
     "FileModifyDate", "FileAccessDate", "FileInodeChangeDate",
     "FilePermissions", "FileType", "FileTypeExtension",
-    "MIMEType",
+    "MIMEType", "FileName", "FileSize",
 }
 
 def _open_csv(path: Path, fieldnames: list[str]) -> tuple:
