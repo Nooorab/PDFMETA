@@ -58,7 +58,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -89,6 +89,7 @@ PERIOD_POST_LAW   = "post-2026"   # Descriptive only
 
 QUOTA_PER_PERIOD  = 50            # Max PDFs per authority per temporal period
 PAGE_CAP          = 10            # Max successful PDFs per HTML page
+MAX_PAGES_PER_AUTHORITY = 500     # Max HTML pages to crawl per authority
 
 SENSITIVE_KEYWORDS = [
     "rapport", "beslut", "protokoll", "arsredovisning", "policy",
@@ -105,7 +106,7 @@ def classify_year(year: Optional[int]) -> Optional[str]:
         return PERIOD_NIS2_PREP
     if year >= 2026:
         return PERIOD_POST_LAW
-    return None   # Before 2020 — out of scope
+    return "pre-2020"   # Before 2020 — out of scope
 
 def should_download(url_year: Optional[int], period_counts: dict) -> bool:
     """
@@ -115,7 +116,7 @@ def should_download(url_year: Optional[int], period_counts: dict) -> bool:
         return True  # Unknown — collect anyway
     
     period = classify_year(url_year)
-    if not period:
+    if period == "pre-2020":
         return False  # Before 2020 — out of scope
     
     if period == PERIOD_POST_LAW:
@@ -533,6 +534,11 @@ def process_pdf(
     year_used   = url_year or http_year or pdf_year
     period      = classify_year(year_used) or "unknown"
 
+    if period == "pre-2020":
+        log.debug(f"    [SKIP] File is from before 2020: {pdf_url}")
+        tmp_path.unlink()
+        return None
+
     # Enforce quotas after download (since url_year might have been missing)
     if period_counts.get(period, 0) >= QUOTA_PER_PERIOD:
         log.debug(f"    [SKIP] Period '{period}' quota full: {pdf_url}")
@@ -544,7 +550,14 @@ def process_pdf(
     final_dir = DATA_DIR / "01_raw_pdfs" / year_str / authority.name_en.replace(" ", "_").replace("/", "-")
     final_dir.mkdir(parents=True, exist_ok=True)
     
-    final_path = final_dir / tmp_path.name
+    real_filename = unquote(urlparse(pdf_url).path.split("/")[-1])
+    if not real_filename or not real_filename.lower().endswith(".pdf"):
+        real_filename = f"{sha256[:12]}.pdf"
+    else:
+        # Prefix with hash to prevent overwriting files with generic names like 'rapport.pdf'
+        real_filename = f"{sha256[:8]}_{real_filename}"
+
+    final_path = final_dir / real_filename
     try:
         tmp_path.rename(final_path)
         log.debug(f"    [SAVED] {final_path.name}")
@@ -652,6 +665,10 @@ def collect_authority(
         if page_url in visited_pages:
             continue
         visited_pages.add(page_url)
+        
+        if len(visited_pages) >= MAX_PAGES_PER_AUTHORITY:
+            log.info(f"  [CAP] Reached {MAX_PAGES_PER_AUTHORITY} page limit for authority. Moving on.")
+            break
 
         if not is_allowed(page_url):
             log.debug(f"    [robots.txt] Skipping page: {page_url}")
@@ -761,10 +778,11 @@ def main():
     )
     args = parser.parse_args()
 
-    global QUOTA_PER_PERIOD, PAGE_CAP
+    global QUOTA_PER_PERIOD, PAGE_CAP, MAX_PAGES_PER_AUTHORITY
     if args.test_mode:
         QUOTA_PER_PERIOD = 2
         PAGE_CAP = 2
+        MAX_PAGES_PER_AUTHORITY = 20
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
