@@ -95,11 +95,11 @@ TIER1 = [
         start_url="https://www.foi.se/",
     ),
     Authority(
-        name="Säkerhets- och integritetsskyddsnämnden",
-        name_en="Security and Integrity Protection Board (SIN)",
+        name="Myndigheten för säkerhets- och integritetsskydd",
+        name_en="Swedish Commission on Security and Integrity Protection (MSI)",
         tier=1,
-        domain="www.sakint.se",
-        start_url="https://www.sakint.se/",
+        domain="www.msi.se",
+        start_url="https://www.msi.se/",
     ),
 ]
 

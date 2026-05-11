@@ -61,7 +61,8 @@ SKIP_FIELDS = {"FileName","FileSize","Directory"}
 R3_NAMES = {"PrinterName","C_Owner_WorkUnitPath","C_WorkUnitPath",
     "C_Owner_WorkUnit","C_WorkUnit","C_Owner_WorkUnit_ExternalId",
     "CdpWorkPlace","CdpCompany","TemplateUrl","Xd_ProgID","C_Owner_UserName",
-    "ArticulatePath", "ArticulateGUID", "CloudStatistics_StoryID"}
+    "ArticulatePath", "ArticulateGUID", "CloudStatistics_StoryID",
+    "ClassificationContentMarkingHeaderText"}
 R3_PFX = ["MSIP_Label_","Stc3"]
 R2_NAMES = {"Author","Creator","LastModifiedBy","C_Owner","C_Owner_Email",
     "C_Owner_FamilyName","C_Owner_GivenName","C_Owners",
@@ -70,7 +71,8 @@ R2_NAMES = {"Author","Creator","LastModifiedBy","C_Owner","C_Owner_Email",
     "Stc3_pr_LastName","Stc3_pr_EMail","Stc3Pr_FirstName","Stc3Pr_LastName",
     "Stc3Ts_ProcessedBy","Stc3Ts_ProcessedOwner","AM_Ansvarig","Aktor",
     "C_Form_INFORMATIONSKLASSNING","Personuppgifter","Sekretess",
-    "Klassifisering","CdpEmail"}
+    "Klassifisering","CdpEmail", "GrammarlyDocumentId", 
+    "Mendeley_Unique_User_Id_1", "Mendeley0020Unique0020User0020Id_1"}
 R1_NAMES = {"Producer","CreatorTool","PDFVersion","XMPToolkit","Linearized",
     "HasXFA","Software","GTS_PDFXVersion","GTS_PDFAVersion","Trapped"}
 
